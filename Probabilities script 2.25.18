@@ -51,7 +51,8 @@ def realizations(job):
         copy_bk = bk[:]                         # allows for the appending of bk to backlog so previous appends aren't changed to current append 
         all_realizations.append(copy_bk)        # appends the realization list to have each possbile backlog
         realization_K += 1                      # moves to next realization realization
-    print (all_realizations)
+    for elm in all_realizations:
+        print (elm)
     
 realizations(jobs)
 

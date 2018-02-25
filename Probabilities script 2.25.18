@@ -1,0 +1,61 @@
+# Artaic MTO Probability Model 
+# Based on Pricing and lead time decisions for make-to-order firms with contingent orders
+# By Fred F. Easton, Douglas R. Moodie
+
+# input data {(current orders:array),(Wj estimated work content [days]:Calculated Float), (dj days unti job due: float),
+# (k direct cost per unit of work content: float)}
+from numpy import array
+from math import exp
+from itertools import product
+jobs = {1:1, 2:1, 3:1, 4:0, 5:0} # Dictionary of jobs where key = job number , value = 1 or 0 (1 if booked, 0 otherwise)
+
+# probability order is accepted at cost Cj and days until job due dj
+def OrderAccepted(Cj, Wj, dj, k):
+    Pj = []   # probability order is accepted at cost Cj and days until job due dj
+    Cj = []   # cost of job j
+    Wj = []   # work content (days)
+    dj = []   # days until job due (is the promised lead time for job j, relative to the current time)
+    K  = []   # direct cost per unit work content (could change depending on material)
+    B0 = []   # estimated from historical bidding results
+    B1 = []   # estimated from historical bidding results
+    B2 = []   # estimated from historical bidding results
+    for j in Pj:
+        Pj = [ 1 + B0 * (exp( B1 * [ (dj - Wj) / (Wj) ] + B2 * [ ((Cj)/(K*Wj)) - 1 ]))] ** -1
+
+# Function to iterate all binary job backlogs and adds them to realization log
+def realizations(job):
+    bk = []                     # The kth realization of the backlog, where bk is an ordered binary vector of length N where it is the set of b(k)j
+    all_realizations = []       # List of all possible realization lists 
+    realization_K = 0           # Counter of each realization number
+    unconfirmed_jobs = 0        # Initializes unconfirmed jobs counter
+    
+    for j in job:                               # Finds number of unconfirmed jobs (number of dictionary (jobs) entries with value of 0)
+        if job[j] == 0:
+            unconfirmed_jobs += 1
+    length = len(jobs) - unconfirmed_jobs       # Finds number of confirmed jobs (number of dictionary (jobs) entries with value of 1)
+    copy_length = length
+    possible_backlogs = list(map(list, product([0, 1], repeat=unconfirmed_jobs))) # iterate all values of binary sequence based
+
+    for i in possible_backlogs:                 # adds each possible binary backlog to the current jobs log and prints resulting list
+        current_realization = i           
+        index = 0
+        while copy_length > 0:
+            bk.append(1)
+            copy_length -= 1
+        for bj in current_realization:          # sets list entry after all confirmed orders a digit bj of our current backlog realization
+            if realization_K == 0:
+                bk.append(bj)
+            elif realization_K > 0:
+                bk[length + index] = bj         # length + index moves through each non-confirmed order to change its value to bj
+                index += 1
+        copy_bk = bk[:]                         # allows for the appending of bk to backlog so previous appends aren't changed to current append 
+        all_realizations.append(copy_bk)        # appends the realization list to have each possbile backlog
+        realization_K += 1                      # moves to next realization realization
+    print (all_realizations)
+    
+realizations(jobs)
+
+
+
+    
+

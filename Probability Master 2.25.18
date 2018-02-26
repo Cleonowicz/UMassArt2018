@@ -1,0 +1,125 @@
+# Artaic MTO Probability Model 
+# Based on Pricing and lead time decisions for make-to-order firms with contingent orders
+# By Fred F. Easton, Douglas R. Moodie
+
+# input data {(current orders:array),(Wj estimated work content [days]:Calculated Float), (dj days unti job due: float),
+# (k direct cost per unit of work content: float)}
+from numpy import array
+from math import exp
+from itertools import product
+jobs = {1:1, 2:1, 3:1, 4:0, 5:0}    # Dictionary of jobs where key = job number , value = 1 or 0 (1 if booked, 0 otherwise)
+Pj = [1, 1, 1, 0.3, 0.9]            # probability order is accepted at cost Cj and days until job due dj
+Cj = []                             # cost of job j
+Wj = [4, 3, 2, 5, 1]                # work content (days)
+dj = [8, 9, 10, 11, 12]             # days until job due (is the promised lead time for job j, relative to the current time)
+Prob_bk = []
+
+# probability order is accepted at cost Cj and days until job due dj
+def OrderAccepted(Cost, Work_Content, days_until_due, direct_cost):
+    K  = []   # direct cost per unit work content (could change depending on material)
+    B0 = []   # estimated from historical bidding results
+    B1 = []   # estimated from historical bidding results
+    B2 = []   # estimated from historical bidding results
+    for j in Pj:
+        Pj = [ 1 + B0 * (exp( B1 * [ (dj[j] - Wj[j]) / (Wj[j]) ] + B2 * [ ((Cj[j]) / (K[j] * Wj[j])) - 1 ]))] ** -1
+
+# Function to iterate all binary job backlogs and adds them to realization log, also generates all possible schedules
+def realizations(job):
+    bk = []                     # The kth realization of the backlog, where bk is an ordered binary vector of length N where it is the set of b(k)j
+    all_realizations = []       # List of all possible realization lists 
+    sk = []                     # Schedule for realization k
+    schedule = []               # List of all possible realization schedules
+    realization_K = 0           # Counter of each realization number
+    unconfirmed_jobs = 0        # Initializes unconfirmed jobs counter
+    potential_work_content = 0  # Total work content if all new jobs were accepted
+    current_work_content = 0    # Total work content of all current accepted jobs
+    
+    for j in job:                               # Finds number of unconfirmed jobs (number of dictionary (jobs) entries with value of 0)
+        if job[j] == 0:
+            unconfirmed_jobs += 1
+            potential_work_content += Wj[j - 1] # Note jobs dictionary must be ordered so it starts by 1 and increases by 1 so this works
+        else:
+            current_work_content += Wj[j - 1]   # Note jobs dictionary must be ordered so it starts by 1 and increases by 1 so this works
+    
+    length = len(jobs) - unconfirmed_jobs       # Finds number of confirmed jobs (number of dictionary (jobs) entries with value of 1)
+    copy_length = length
+    possible_backlogs = list(map(list, product([0, 1], repeat=unconfirmed_jobs))) # iterate all values of binary sequence based
+
+    for i in possible_backlogs:                 # adds each possible binary backlog to the current jobs log and prints resulting list
+        current_realization = i           
+        index = 0
+        index1 = 0
+        digit = 0
+        
+        while copy_length > 0:
+            bk.append(1)
+            for work_content in range(Wj[digit]):
+                sk.append(digit + 1)
+            digit += 1
+            copy_length -= 1
+        digit = length 
+        
+        if realization_K == 0:
+            for zero in range(potential_work_content):
+                sk.append(0)                    # appends zeros to end of current accepted job order. Appends amount = potential_work_content so maximum list length is found preventing "list assignment out of range" error
+        
+        for bj in current_realization:          # sets list entry after all confirmed orders a digit bj of our current backlog realization
+            if realization_K == 0:
+                bk.append(bj)
+            elif realization_K > 0:
+                bk[length + index] = bj         # length + index moves through each non-confirmed order to change its value to bj
+                if bj == 1:
+                    for work_content in range(Wj[digit]):
+                        sk[current_work_content + index1] = digit + 1
+                        index1 += 1
+                for entry, item in enumerate(sk):   # without this loop values from previous iterations of the list may show up incorrectly in schedule
+                    if (item > digit + 1):
+                        sk[entry] = 0
+                digit += 1                      # if the loop isn't entered digit must be indexed so it displays as the following jobs number
+                index += 1                     
+        copy_bk = bk[:]                         # allows for the appending of bk to backlog so previous appends aren't changed to current append 
+        copy_sk = sk[:]                         # allows for the appending of bsk to schedule so previous appends aren't changed to current append
+        all_realizations.append(copy_bk)        # appends the realization list to have each possbile backlog
+        schedule.append(copy_sk)                # appends the schedule to have each possbile schedule
+        realization_K += 1                      # moves to next realization realization
+    
+    for elm in all_realizations:
+        print (elm)
+    
+    for elm1 in schedule:
+        print (elm1)
+    
+    # Finds the probability of each k realized backlog (I have this written as its own function in another script, but the variables wouldnt pass right)
+    index2 = 0
+    for B in all_realizations:                              # looks at each list entry (which is also a list) in all_realizations
+        counter2 = 0                                
+        Prob_bk.append(1)                                   # Appends a 1 to the pobability of bk list so the P(Cj,dj)j can be multipled
+        for bj in B:                                        # Looks at each list entry in B (so either a 1 or 0 value)
+            if not Pj[counter2] == 1:                       # If P(Cj,dj)j does not equal 1 (meaning a job hasn't been accepted yet)
+                # formula 4 in paper
+                if bj == 1:                                
+                    Prob_bk[index2] *= Pj[counter2]         # Multiply Prob_bk by P(Cj,dj)j since we are considering job as accepted (1) 
+                else:
+                    Prob_bk[index2] *= 1 - Pj[counter2]     # Multiply Prob_bk by 1 - P(Cj,dj)j since we are consider job not yet accepted (0)
+            counter2 += 1
+        index2 += 1
+    print(Prob_bk)
+    Prob_Idle_Workcenter(Prob_bk, unconfirmed_jobs, schedule)
+    
+# Probability workcenter will be idle during period t, or p(At = 0)
+def Prob_Idle_Workcenter(P_Realized_BL, job, Shop_Schedule):  # Pass in Prob_bk, unconfirmed_jobs, and schedule
+    counter3 = 0
+    P_Idle_WC = [0] * len(Shop_Schedule[0])
+    for entry in range(len(Shop_Schedule[0])):                  # For each entry in the potential schedule
+        if Shop_Schedule[0][entry] > 0:                         # This only considers the first Schedule list entry because this contains all firm orders
+            P_Idle_WC[counter3] = 0.0                           # probability shop is idle for firm orders is 0
+            counter3 += 1                                       # Increments to next list item
+        else:                                                   # If an entry = 0 it is unrealized
+            for n in range(2 ** job):                           # Loops through all schedules to see if there are other unrealized values
+                if Shop_Schedule[n][entry] == 0:                # Checks to see if there are other unrealized values
+                    P_Idle_WC[counter3] += P_Realized_BL[n]     # Gives probability workcenter will be idle during time t, formula (5)
+            counter3 += 1                                       # After all p(b(k)) summed for zero entries at that entry level, the counter is indexed
+    print(P_Idle_WC)
+
+realizations(jobs)
+

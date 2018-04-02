@@ -1,0 +1,46 @@
+# Generates distribution for p(q,t) which is probability of exactly q units of available shop time through period d
+# Where p(q,t) = [p(q - 1,t - 1) * p(At = 0) + p(q,t - 1)*(1 - p(At = 0))]
+def Available_shop_time_dist(At, CWC, PWC, machine_number):
+    w = Wj[machine_number][len(Wj[machine_number])-1]
+    t = CWC + 1
+    q_dist = []
+    length = 1
+    
+    while length <= CWC:                    # This loop generates the first layer of the p(q,t) distribution 
+        if length == 1:                     # The first layer there is 100% chance on no available shop time during the time 
+        else:                               # of confirmed orders hence the value of 1 during this time
+            q_dist.append([1])
+            q_dist[0].append(1)
+        length += 1
+    
+    limit = 1                               # Sets the limit on how many q values to calculate for each t, is inremented by 1 on each iteration
+    increment = -1
+    while t <= PWC + CWC:                   # Loops for all time periods (t) <= the sum of current work content and potential work content --> max possible work content
+        q = 0
+        q_dist.append([])                   # For each q simulated there must be a resulting list corresponding to that row
+        counter = increment
+        while q <= limit:                                           # To save memory this loop was made to not include proceeding zeros
+            if q == 0:                                              # Since q cannot be negative this if statement is for the first row in the matrix and uses the second half of the full equation 
+                prob = round(q_dist[q][t-2] * (1 - At[t-1]),2) 
+                q_dist[q].append(prob)
+            elif q == limit:                                                # This is for when q has reached its last positive value (before becoming zero), the proceeding entry in the list would have been zero so the equation becomes the first half of the above equation
+                if q != 1:                                                  # Because of the matrix structure all rows after 2 (entry index 1) are accessed using the counter instead of t value
+                    prob = round(q_dist[q-1][counter-1] * (At[t-1]),2) 
+                else:    
+                    prob = round(q_dist[q-1][t-2] * (At[t-1]),2) 
+                q_dist[q].append(prob)
+            else:                                                           # The case where both parts of the formula are used because there are no nonexistent values
+                if q > 1:                                                   # Because of the matrix structure all rows after 2 (entry index 1) are accessed using the counter instead of t value
+                    prob = round(q_dist[q-1][counter+1] * (At[t-1]) + q_dist[q][counter] * (1 - At[t-1]),2) 
+                else:
+                    prob = round(q_dist[q-1][t-2] * (At[t-1]) + q_dist[q][counter] * (1 - At[t-1]),2) 
+                q_dist[q].append(prob)
+                counter -= 1
+            q += 1
+        limit += 1              # 1 more value for each column is needed so the limit is increased by 1
+        t += 1
+        increment += 1
+        
+    for elm in q_dist:          # Note that resulting matrix lines up on the right edge instead of the left column wise
+        print (elm)
+

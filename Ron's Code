@@ -1,0 +1,476 @@
+import numpy as np
+import plotly.plotly as py
+import plotly.figure_factory as ff
+from datetime import datetime
+from datetime import timedelta
+import math as math
+
+
+# Variables
+Date = datetime.now()
+Date = Date.replace(minute=0, second=0, microsecond=0)
+zero = datetime(1, 1, 1, 0, 0, 0)  # used as place holder for datetime variables
+Name = 0
+Size = 1
+Material = 2
+Duedate = 3
+Arrival = 4
+Machine = 5
+Ptime = 6
+Atime = 7
+Start = 8
+Quote = 9
+Position = 10
+Stage = 11
+Prob_of_acc = 12
+Dsp = 13
+Job_set = 14
+num_var = Job_set + 1
+# Other Variables
+Open = 8.0
+Close = 18.0
+hours_open = Close - Open
+Now = float(Date.hour)
+Arty_ptime = {'.375-VG': 25, '.5-SG': 20, '.5-CG': 20, '.5-UP': 10.63, '.75-VG': 10, '1-SG': 4.4,
+              '1-UP': 4.4, '1-CG': 4.4}
+Arnold_ptime = {'.375-VG': 25, '.5-SG': 20, '.5-CG': 20, '.5-UP': 10.63, '.75-VG': 10, '1-SG': 4.4,
+                '1-UP': 4.4, '1-CG': 4.4}
+WAT_ptime = {'.375-VG': 90, '.5-SG': 60, '.5-CG': 60, '.5-UP': 50, '.75-VG': 40, '1-SG': 16, '1-UP': 16, '1-CG': 16}
+Stage_Prob = {0: .25, 1: .4, 2: .5, 3: .6, 4: .75, 5: .9, 10: 1}
+
+
+# Import Master Job Data from file
+master_import = open('Master.txt', 'r')  # Find file with data
+content = master_import.readlines()  # imports data from external file
+if len(content) > 0:
+    count = len(content)  # Finds the number of lines(jobs) in the external file
+    master_job = np.empty((count, num_var), dtype=object)  # creates empty matrix to store data from external file
+    jj = 0
+    for line in content:  # copies data from external file into the new master_job matrix
+        s = line.split(',')
+        for ii in range(num_var):
+            master_job[jj, ii] = s[ii]
+        if master_job[jj, 0] == '0':
+            master_job = np.delete(master_job, 0, axis=0)
+            jj = jj - 1
+        else:
+            master_job[jj, Size] = int(master_job[jj, Size])
+            master_job[jj, Ptime] = float(master_job[jj, Ptime])
+            master_job[jj, Atime] = float(master_job[jj, Atime])
+            master_job[jj, Stage] = int(master_job[jj, Stage])
+            master_job[jj, Prob_of_acc] = float(master_job[jj, Prob_of_acc])
+            master_job[jj, Dsp] = master_job[jj, Dsp]
+            master_job[jj, Arrival] = datetime.strptime(master_job[jj, Arrival], '%Y-%m-%d %H:%M:%S')
+            master_job[jj, Duedate] = datetime.strptime(master_job[jj, Duedate], '%Y-%m-%d %H:%M:%S')
+            master_job[jj, Start] = datetime.strptime(master_job[jj, Start], '%Y-%m-%d %H:%M:%S')
+            master_job[jj, Quote] = datetime.strptime(master_job[jj, Quote], '%Y-%m-%d %H:%M:%S')
+            master_job[jj, Position] = int(master_job[jj, Position])
+            jj += 1
+    master_import.close()
+else:
+    master_job = np.array([0, 0, 0, zero, zero, 0, 0, zero, zero, zero, 0, 0, 0, 0, 0])
+
+
+class Project(object):
+    def __init__(self, name, size, material, duedate):
+        self.name = name
+        self.size = size
+        self.material = material
+        self.position = 0
+        self.duedate = duedate
+        self.arrival = Date
+        self.machine = ""
+        self.ptime = 0.0
+        self.atime = datetime(1, 1, 1, 0, 0, 0)
+        self.start = datetime(1, 1, 1, 0, 0, 0)
+        self.quote = datetime(1, 1, 1, 0, 0, 0)
+        self.stage = 1  # Starting Stage
+        self.prob_of_acc = .5  # Starting probability of Acceptance
+        self.job_set = "Q"
+        self.dsp = 0
+        # dsp = Days Since Proposal
+
+
+def master_job_import_update():
+    # updates Days Since Proposal and job_set based on current date (change to jobs set 'F' or 'Exp')
+    num_jobs = master_job.shape[0]  # counts number of jobs in the master_job matrix
+    i = 0
+    freeze = Date + timedelta(days=3)
+    while i < num_jobs:
+        if master_job[i, Job_set] == 'Q':
+            master_job[i, Dsp] = Date - master_job[i, Arrival]
+            grace = master_job[i, Arrival] + timedelta(days=14)
+            if grace - master_job[i, Dsp] < master_job[i, Arrival]:
+                master_job[i, Job_set] = 'Exp'
+                # if job has not been accepted 14 days after the proposal, the offer expires
+                # Figure out where to move Expired Job Quotes to
+        elif master_job[i, Job_set] == 'J':
+            if master_job[i, Start] < freeze:
+                # if job has been accepted and scheduled to start in less than 3 days it moves to FROZEN job set
+                master_job[i, Job_set] = 'F'
+        i += 1
+    return master_job
+
+
+def create_new_job(name, size, material, duedate):
+    # adds new job information to master_job (uses inputs from Artaic data)
+    new_job = Project(name, size, material, duedate)  # Create Project object using user input info
+    global new_line
+    global master_job
+    new_line = [new_job.name, new_job.size, new_job.material, new_job.duedate, new_job.arrival,
+                new_job.machine, new_job.ptime, new_job.atime, new_job.start, new_job.quote, new_job.position,
+                new_job.stage, new_job.prob_of_acc, new_job.dsp, new_job.job_set]  # MUST UPDATE WITH NEW CHARACTERISTIC
+    master_job = np.vstack((master_job, new_line))  # Adds new line to master_job
+    return master_job
+
+
+def artaic_job_accepted(name):  # Pull info from Artaic regarding event and update job_matrix
+    global master_job
+    i = np.where(master_job[:, 0] == name)  # finds location of the job name which user input as accepted job
+    master_job[i, Job_set] = 'J'  # updates the job set
+    master_job[i, Stage] = 10  # Sets job acceptance stage to 10 to show it has been accepted
+    master_job[i, Prob_of_acc] = Stage_Prob[10]  # updates prob of acceptance to 100%
+    return master_job
+
+
+def artaic_job_stage_update(name, new_stage):  # Updates job stage and prob of acceptance in master_job matrix
+    global master_job
+    i = np.where(master_job[:, 0] == name)  # find location of job which user input in the master_job matrix
+    master_job[i, Stage] = new_stage  # updates the value of the job acceptance stage
+    master_job[i, Prob_of_acc] = Stage_Prob[int(new_stage)]  # updates probability of acceptance
+    return master_job
+
+
+def artaic_job_declined(name):  # Updates job_matrix if a job has been declined
+    global master_job
+    i = np.where(master_job[:, 0] == name)  # finds the location of the job which user input as declined
+    master_job[i, Job_set] = 'D'  # updates the job_set of the job
+    return master_job
+    # FIND OUT WHAT TO DO WITH JOB LINE IN MASTER_JOB
+
+
+def gantt_chart(arty, arnold, wat):  # Create a Gantt chart of the schedule
+    x = arty.shape[0]  # find number of jobs scheduled for Arty
+    y = arnold.shape[0]  # find number of jobs schedule for Arnold
+    z = wat.shape[0]  # find number of jobs scheduled for WAT
+    xx = np.ones([x, 1])  # create index to be attached to Arty
+    yy = np.ones([y, 1])
+    zz = np.ones([z, 1])
+    yy = yy * 2
+    zz = zz * 3
+    arty_gantt = np.hstack((arty, xx))  # attached index to Arty set
+    arnold_gantt = np.hstack((arnold, yy))
+    wat_gantt = np.hstack((wat, zz))
+    floor_schedule = np.vstack((arty_gantt, arnold_gantt, wat_gantt))  # combine all 3 schedules into 1
+    start_rank = np.argsort(floor_schedule[:, 1], axis=0)  # find job order of all 3 machines by scheduled Start time
+    dummy = np.array([0, 0, 0, 0])
+    i = 0
+    while i < len(start_rank):  # sort all jobs by scheduled Start time
+        dummy = np.vstack((dummy, floor_schedule[start_rank, :]))
+        i = i + 1
+    floor_schedule = np.delete(dummy, 0, axis=0)
+    df = []
+    i = 0
+    while i < floor_schedule.shape[0]:  # create dictionary of jobs to be prepare for gantt chart
+        t = dict(project=floor_schedule[i, 0], start=floor_schedule[i, 1], finish=floor_schedule[i, 2],
+                 machine=floor_schedule[i, 3])
+        df = df.append(t)
+        i = i+1
+    fig = ff.create_gantt(df)  # populate graph with job information
+    py.iplot(fig, filename='Manufacturing_Floor_Gantt_Chart', world_readable=True)  # create gantt chart
+
+
+def edd_hueristic_order_base():
+    global Date
+    global master_job
+    last_line = master_job.shape[0] - 1  # numerates the line number of the last job is only used when there are no jobs
+    # in the system and it is neccesary to handle an empty row
+    moveup = Date + timedelta(days=7)  # identify the period which an accepted job takes precedence over an open bid
+    heuristic = np.array([[0, 0]])  # create heuristic determinant... [Name, Machine, Position]
+    es_ord = np.argsort(master_job[:, Quote], axis=0)  # identify the order of all jobs by Earliest Start Date
+    if master_job[last_line, Machine] == "":
+        es_ord = es_ord[1:]  # if last line is new job w/ no machine, its removed from heuristic ordering consideration
+    es_description = np.array([0, 0, 0, 0])  # initialize edd matrix
+    i = 0
+    while i < len(es_ord):  # order all jobs in system by earliest due date in edd matrix
+        a = es_ord[i]
+        x = np.array([master_job[a, Name], master_job[a, Duedate], master_job[a, Start], master_job[a, Job_set]])
+        es_description = np.vstack((es_description, x))
+        i = i + 1
+    es_description = np.delete(es_description, 0, axis=0)  # delete first row of zeros in edd matrix
+    i = 0
+    f_set = np.array([0, 0, 0])  # count # of jobs that scheduled in the freeze period
+    for x in range(es_description.shape[0]):  # separates all jobs in f_set from other jobs
+        if es_description[x, 3] == 'F':
+            f_set = np.vstack((f_set, [es_description[x, 0], es_description[x, 3], es_description[x, 2]]))
+    f_set = np.delete(f_set, 0, axis=0)  # delete first row of zeros
+    if f_set[1] > 2:  # finds if any jobs are in the f_set
+        f_ord = np.argsort(f_set[:, 2], axis=0)  # sorts f_set by earliest previously scheduled start date
+        num_f_set = f_set.shape[0]  # finds number of jobs in f_set
+        while i < num_f_set:  # if job is in job_set F, keep in the same machine/position
+            f_job = np.where(es_description[:, 0] == f_set[f_ord[i], 0])
+            x = [str(es_description[f_job, 0])[3:-3], str(es_description[f_job, 3])[3:-3]]
+            heuristic = np.vstack((heuristic, x))  # add f_set jobs to the heurstic recommendation
+            es_description = np.delete(es_description, f_job, axis=0)  # remove f_set jobs from all job set
+            i += 1
+    if heuristic.shape[0] > 1:  # if a row of zeros exists in huerstic it is removed
+        heuristic = np.delete(heuristic, 0, axis=0)
+    reorder_set = np.array([[0, 0, 0, 0]])
+    size = es_description.shape[0]  # finds number of jobs that still need to be placed in hueristic
+    i = 0
+    while i < size:
+        if es_description[i, 3] == 'J':  # check if job has been accepted by the customer
+            if es_description[i, 2] < moveup:  # if job is schedule within moveup period
+                p = es_description[i, :]  # calls job characteristics from edd matrix
+                reorder_set = np.vstack((reorder_set, p))  # copies job in reorder_set matrix
+                es_description = np.delete(es_description, i, axis=0)  # removes job from edd schedule
+                i -= 1  # removes job spot from consideration so while loop doesnt miss any jobs
+                size -= 1
+        i += 1
+    if len(reorder_set) > 1:  # checks to see if any jobs needs to be moved up
+        reorder_set = np.delete(reorder_set, 0, axis=0)  # delete first row of zeros
+        reorder_set_ord = np.argsort(reorder_set[:, 1], axis=0)  # finds order of EDD of J jobs within moveup
+        g = len(reorder_set_ord)  # find number of jobs that need to be moved up in schedule
+        i = 0
+        while i < g:  # reorder accepted jobs within moveup period by EDD
+            v = reorder_set_ord[i]
+            x = [reorder_set[v, 0], reorder_set[v, 3]]  # finds job which is going to be moved
+            heuristic = np.vstack((heuristic, x))
+            leave = np.where(es_description[:, 0] == reorder_set[v, 0])  # removes job which has been moved from
+            es_description = np.delete(es_description, leave, axis=0)    # further consideration
+            i += 1
+    while es_description.shape[0] > 0:  # checks if any jobs are left to be schedule in heuristic
+        x = np.array([es_description[0, 0], es_description[0, 3]])
+        heuristic = np.vstack((heuristic, x))  # adds remaining jobs in the order which they were in previous iteration
+        es_description = np.delete(es_description, 0, axis=0)
+    i = heuristic.shape[0] - 1
+    while i > -1:  # loop used to remove any rows of zeros from the hueristic
+        if heuristic[i, 0] == '0':
+            if heuristic[i, 1] == '0':
+                heuristic = np.delete(heuristic, i, 0)
+        i = i - 1
+    if master_job[0, 0] == 0:  # if there is a row of zeros in the master_job matrix it is now removed
+        master_job = np.delete(master_job, 0, axis=0)
+        last_line -= 1
+    if master_job[last_line, Machine] == "" and master_job.shape[0] > 1:
+        heuristic = np.vstack((heuristic, [master_job[last_line, Name], master_job[last_line, Job_set]]))
+        # ^^ if new job is being quoted it is added to the end of the hueristic list
+        # NEED TO FIGURE OUT WHERE TO PLACE NEW JOB IF THERE IS A REQUESTED DUE DATE
+    return heuristic
+
+
+def master_job_post_heuristic(heuristic):  # FIND WAY TO FIND WHICH JOBS ARE ASSIGNED TO EACH MACHINE
+    global Date, Close, hours_open, master_job, output  # import global time reference variables which affect quoting
+    # initiate scheduling matrices
+    arty = np.array([[0, 0, 0, 0]])
+    arnold = np.array([[0, 0, 0, 0]])
+    wat = np.array([[0, 0, 0, 0]])
+    last = arty.shape[1]-1  # create variable to reference the last value in each row (earliest finish time)
+    # for loop used to assign each job a machine, position, potential quote, start time
+    # uses heuristic input to determine which jobs get assigned first
+    for i in range(heuristic.shape[0]):
+        job = np.where(master_job[:, 0] == heuristic[i, 0])  # find location of job in master_job matrix
+        job_mat = master_job[job, Material]  # finds the material name of the next job to be scheduled
+        job_status = str(master_job[job, Job_set])[3:-3]  # finds which job set the job belongs to
+        # ^_^ need to parse out unnecessary characters i.e. extra brackets
+        job_mat = str(job_mat)[3:-3]  # turn material into string so it can be used to find processing rates
+        # finds number of jobs already scheduled on each of the machines
+        size_arty = arty.shape[0]
+        size_arnold = arnold.shape[0]
+        size_wat = wat.shape[0]
+        # finds the processing time the job on each of the machines using the Process Times Dictionaries and job Size
+        arty_ptime = float(Arty_ptime[job_mat] * master_job[job, Size])
+        arnold_ptime = float(Arnold_ptime[job_mat] * master_job[job, Size])
+        wat_ptime = float(WAT_ptime[job_mat] * master_job[job, Size])
+        # finds at which time each of the machines will be available to begin processing the next job
+        next_arty = Date + timedelta(minutes=float(arty[size_arty-1, last]))
+        next_arnold = Date + timedelta(minutes=float(arnold[size_arnold-1, last]))
+        next_wat = Date + timedelta(minutes=float(wat[size_wat-1, last]))
+        # finds how much time exists between the time which each machine becomes available and the end of the work day
+        time_left_arty = ((Close - float(next_arty.hour)) * 60.0) - float(next_arty.minute)
+        time_left_arnold = ((Close - float(next_arnold.hour)) * 60.0) - float(next_arnold.minute)
+        time_left_wat = ((Close - float(next_wat.hour)) * 60.0) - float(next_wat.minute)
+        # IF LOOPS USED TO FIND WHICH OF THE MACHINES WILL BE ABLE TO FINISH THE JOB EARLIEST, SAME PROCESS USED FOR ALL
+        if arty_ptime - time_left_arty > 0:  # checks if the job will need to be processed on multiple days
+            arty_next_day = arty_ptime - time_left_arty  # finds how much of the job can be processed on the first day
+            overnights = (math.floor(arty_next_day/(60*hours_open))) + 1
+            # ^^ finds how many work days it will take to process the job
+            arty_atime = (overnights * (24.0 - hours_open) * 60.0) \
+                + (arty_next_day - ((overnights - 1)*(hours_open * 60.0)))
+            # ^^ finds the amount of time it will take to process the job considering the job size, material,
+            # machine processing rates, time of day which processing beings, and how long the shop is open each day
+            ef_arty = (float(arty[size_arty-1, last]) + arty_atime)  # finds the time which the job will be completed
+        else:  # the job can be completed on the same stayed it is scheduled to start
+            ef_arty = (float(arty[size_arty-1, last]) + arty_ptime)  # finds the time which the job will be completed
+        # THE SAME STEPS USED ABOVE ARE REPLICATED FOR ARNOLD AND WAT
+        if arnold_ptime - time_left_arnold > 0:
+            arnold_next_day = arnold_ptime - time_left_arnold
+            overnights = math.floor(arnold_next_day / (60 * hours_open)) + 1
+            arnold_atime = (overnights * (24.0 - hours_open) * 60) \
+                + (arnold_next_day - ((overnights - 1) * hours_open * 60.0))
+            ef_arnold = (float(arnold[size_arnold - 1, last]) + arnold_atime)
+        else:
+            ef_arnold = (float(arnold[size_arnold - 1, last]) + arnold_ptime)
+        if wat_ptime - time_left_wat > 0:
+            wat_next_day = wat_ptime - time_left_wat
+            overnights = math.floor(wat_next_day / (24.0 - hours_open)) + 1
+            wat_atime = (overnights * (24.0 - hours_open) * 60) \
+                + (wat_next_day - ((overnights - 1) * hours_open * 60.0))
+            ef_wat = (float(wat[size_wat - 1, last]) + wat_atime)
+        else:
+            ef_wat = (float(wat[size_wat - 1, last]) + wat_ptime)
+        compare = np.array([ef_arty, ef_arnold, ef_wat])  # concatenates the completion time of the job from each mach.
+        earliest = np.argmin(compare)  # finds which machine will be able to complete the job the earliest
+        if earliest == 0:  # ARTY is the optimal machine, master_job and arty matrix are updated accordingly
+            x = [str(master_job[job, 0])[3:-3], earliest, job_status, int(ef_arty)]
+            arty = np.vstack((arty, x))  # the job processing information is added to the Arty Matrix
+            master_job[job, Position] = size_arty  # Job position on machine is updated in master_job matrix
+            master_job[job, Machine] = 'Arty'  # Job's Machine is updated in master_job matrix
+            master_job[job, Ptime] = round((arty_ptime / 60.0), 2)  # Job's Processing time is updated in Master_job
+            master_job[job, Start] = Date + timedelta(minutes=float(arty[size_arty-1, last]))  # Start datetime update
+            master_job[job, Quote] = Date + timedelta(minutes=float(ef_arty))  # Job expected completion datetime
+            master_job[job, Atime] = round(ef_arty/60.0, 2)  # Actual Processing time for job is updated
+        # THE SAME PROCESS IS REPLICATED FOR ARNOLD AND WAT
+        elif earliest == 1:  # ARNOLD is the optimal machine
+            x = [str(master_job[job, Name])[3:-3], earliest, job_status, int(ef_arnold)]
+            arnold = np.vstack((arnold, x))
+            master_job[job, Position] = size_arnold
+            master_job[job, Machine] = 'Arnold'
+            master_job[job, Ptime] = round((arnold_ptime / 60.0), 2)
+            master_job[job, Start] = Date + timedelta(minutes=float(arnold[size_arnold-1, last]))
+            master_job[job, Quote] = Date + timedelta(minutes=float(ef_arnold))
+            master_job[job, Atime] = round(ef_arnold/60.0, 2)
+        elif earliest == 2:  # WAT is the optimal machine
+            x = [str(master_job[job, Name])[3:-3], earliest, job_status, int(ef_wat)]
+            wat = np.vstack((wat, x))
+            master_job[job, Position] = size_wat
+            master_job[job, Machine] = 'WAT'
+            master_job[job, Ptime] = round((wat_ptime / 60.0), 2)
+            master_job[job, Start] = Date + timedelta(minutes=float(wat[size_wat-1, last]))
+            master_job[job, Quote] = Date + timedelta(minutes=float(ef_wat))
+            master_job[job, Atime] = round(ef_wat/60.0, 2)
+    # row of zeros is deleted from each machine schedule matrix
+    arty = np.delete(arty, 0, axis=0)
+    arnold = np.delete(arnold, 0, axis=0)
+    wat = np.delete(wat, 0, axis=0)
+    # machine matrices are concatenated
+    output = np.append(arty, arnold, axis=0)
+    output = np.append(output, wat, axis=0)
+    print(output)
+    output = np.delete(output, 3, axis=1)  # unnecessary information is removed
+    # FIND A WAY TO FIND FIRST AVAILABLE TIMES FOR EACH MACHINE CONSIDERING JOB THAT IS CURRENTLY WORK IN PROGRESS
+    # THIS OUTPUT IS WHAT WILL BE PASSED TO CHRIS'S PORTION OF THE ALGORITHM
+    return output  # output describes Job Name, Machine, Position, and Job_set for each job
+
+
+def create_schedule():  # Assumes jobs already have a machine and position from LT quotation
+    global master_job
+    dummy_reset = np.array([0, 0, 0])
+    j_set = dummy_reset
+    arty_set = dummy_reset
+    arnold_set = dummy_reset
+    wat_set = dummy_reset
+    if master_job[0, 0] == 0:
+        master_job = np.delete(master_job, 0, axis=0)
+    for i in range(master_job.shape[0]):  # Counts number of jobs that exist#
+        if master_job[i, Prob_of_acc] > 0.75:  # Considers any job with over 75% of acceptance for scheduling#
+            j_set = np.vstack((j_set, [master_job[i, Name], master_job[i, Machine], master_job[i, Position]]))
+            # ^^Adds row of info about job with Prob of Acceptance over 75%#
+    j_set = np.delete(j_set, 0, axis=0)  # Deletes first row of zeros in j_set#
+    for j in j_set.shape[0]:  # Sort jobs in j_set by which machine they were assigned to
+        if j_set[j, 1] == 1:
+            arty_set = np.vstack((arty_set, j_set[j, :]))
+        if j_set[j, 1] == 2:
+            arnold_set = np.vstack((arnold_set, j_set[j, :]))
+        if j_set[j, 1] == 3:
+            wat_set = np.vstack((wat_set, j_set[j, :]))
+    arty_set = np.delete(arty_set, 0, axis=0)  # Deletes first row of zeros in arty_set
+    arnold_set = np.delete(arnold_set, 0, axis=0)  # Deletes first row of zeros in arnold_set
+    wat_set = np.delete(wat_set, 0, axis=0)  # Deletes first row of zeros in wat_set
+    # Reordering job sets in increasing K
+    order_arty = np.argsort(arty_set[:, 2], axis=0)
+    order_arnold = np.argsort(arnold_set[:, 2], axis=0)
+    order_wat = np.argsort(wat_set[:, 2], axis=0)
+    dummy = dummy_reset
+    i = 0
+    while i < len(order_arty):  # Ordering jobs on Arty by position
+        dummy = np.vstack((dummy, arty_set[order_arty[i], :]))
+        i = i + 1
+    arty_set = np.delete(dummy, 0, axis=0)
+    dummy = dummy_reset
+    i = 0
+    while i < len(order_arnold):  # Ordering jobs on Arnold by position
+        dummy = np.vstack((dummy, arnold_set[order_arnold[i], :]))
+        i = i + 1
+    arnold_set = np.delete(dummy, 0, axis=0)
+    dummy = dummy_reset
+    i = 0
+    while i < len(order_wat):  # Ordering jobs on WAT by position
+        dummy = np.vstack((dummy, wat_set[order_wat[i], :]))
+        i = i + 1
+    wat_set = np.delete(dummy, 0, axis=0)
+    arty = dummy_reset
+    arnold = dummy_reset
+    wat = dummy_reset
+    for i in arty_set.shape[0]:
+        job = np.where(master_job[:, Name] == arty_set[i, 0])  # search for job information in the master job matrix
+        arty = np.vstack((arty, [master_job[job, Name], master_job[job, Start], master_job[job, Quote]]))
+        # ^^Insert information regarding job to prepare for Gantt chart
+    for i in arnold_set.shape[0]:
+        job = np.where(master_job[:, Name] == arnold_set[i, 0])
+        arnold = np.vstack((arnold, [master_job[job, Name], master_job[job, Start], master_job[job, Quote]]))
+    for i in wat_set.shape[0]:
+        job = np.where(master_job[:, Name] == wat_set[i, 0])
+        wat = np.vstack((wat, [master_job[job, Name], master_job[job, Start], master_job[job, Quote]]))
+    arty = np.delete(arty, 0, axis=0)  # delete first row of zeros
+    arnold = np.delete(arnold, 0, axis=0)
+    wat = np.delete(wat, 0, axis=0)
+    return arty, arnold, wat
+
+
+def save_master_data():
+    # Save Master_Job Matrix as a data file so it can be recovered in the next iteration
+    master_data = open('Master.txt', 'w')  # clear the import data set
+    master_size = master_job.shape[0]  # find the new number of jobs in the current system
+    for i in range(0, master_size):  # Convert master_job to strings and print on the external text file
+        valstr = ""
+        for j in range(0, num_var):
+            val = str(master_job[i, j])
+            valstr = valstr + val + ','
+            j += 1
+        valstr = valstr + '\n'
+        master_data.write(valstr)
+        i += 1
+    master_data.close()
+
+
+# RUNNING THE CODE
+if len(content) > 0:
+    master_job = master_job_import_update()
+event = input("What is the event?: ")
+if event == 'n':
+    new_name = input("What is the job name?: ")
+    new_size = int(input("What is the size of the job?: "))
+    new_material = input("What is the job material?: ")
+    is_duedate = input("Is there a due date?: ")
+    if is_duedate == 'y':
+        new_duedate = input("What is the desired due date?: ")
+    else:
+        new_duedate = Date + timedelta(days=30)
+    master_job = create_new_job(new_name, new_size, new_material, new_duedate)
+elif event == 'a':
+    accepted_name = input("What job got accepted")
+    master_job = artaic_job_accepted(accepted_name)
+elif event == 's':
+    stage_name = input("What job changed stages?: ")
+    update_stage = input("What stage has the job been updated to?")
+    master_job = artaic_job_stage_update(stage_name, update_stage)
+elif event == 'd':
+    declined_job = input("What job got declined?: ")
+    master_job = artaic_job_declined(declined_job)
+elif event == 'nothing':
+    ppp = 1
+    ppp = 2
+heuristic_list = edd_hueristic_order_base()
+pre_schedule = master_job_post_heuristic(heuristic_list)
+save_master_data()
